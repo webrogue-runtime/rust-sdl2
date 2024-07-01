@@ -11,7 +11,7 @@ extern crate pkg_config;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::{env, fs, io};
+use std::{env, fs, io::{self, Write}};
 
 #[cfg(feature = "bindgen")]
 macro_rules! add_msvc_includes_to_bindings {
@@ -32,11 +32,11 @@ macro_rules! add_msvc_includes_to_bindings {
     };
 }
 
-#[cfg(feature = "bundled")]
+#[cfg(any(feature = "bundled", feature = "bundled-ttf"))]
 fn init_submodule(sdl_path: &Path) {
     if !sdl_path.join("CMakeLists.txt").exists() {
         Command::new("git")
-            .args(["submodule", "update", "--init"])
+            .args(["submodule", "update", "--init", "--recursive"])
             .current_dir(sdl_path)
             .status()
             .expect("Git is needed to retrieve the SDL source files");
@@ -158,6 +158,73 @@ fn compile_sdl2(sdl2_build_path: &Path, target_os: &str) -> PathBuf {
     cfg.build()
 }
 
+// compile a shared or static lib depending on the feature
+#[cfg(feature = "bundled-ttf")]
+fn compile_sdl2_ttf(sdl2_ttf_build_path: &Path, target_os: &str) -> PathBuf {
+    let mut cfg = cmake::Config::new(sdl2_ttf_build_path);
+    if let Ok(profile) = env::var("SDL2_BUILD_PROFILE") {
+        cfg.profile(&profile);
+        cfg.define("CMAKE_CONFIGURATION_TYPES", &profile);
+    } else {
+        cfg.profile("Release");
+        cfg.define("CMAKE_CONFIGURATION_TYPES", "Release");
+    }
+
+    // Allow specifying custom toolchain specifically for SDL2.
+    if let Ok(toolchain) = env::var("SDL2_TOOLCHAIN") {
+        cfg.define("CMAKE_TOOLCHAIN_FILE", &toolchain);
+    } else {
+        // Override __FLTUSED__ to keep the _fltused symbol from getting defined in the static build.
+        // This conflicts and fails to link properly when building statically on Windows, likely due to
+        // COMDAT conflicts/breakage happening somewhere.
+        #[cfg(feature = "static-link")]
+        cfg.cflag("-D__FLTUSED__");
+
+        #[cfg(target_os = "linux")]
+        {
+            // Add common flag for affected version and above
+            use version_compare::{compare_to, Cmp};
+            if let Ok(version) = std::process::Command::new("cc")
+                .arg("-dumpversion")
+                .output()
+            {
+                let affected =
+                    compare_to(std::str::from_utf8(&version.stdout).unwrap(), "10", Cmp::Ge)
+                        .unwrap_or(true);
+                if affected {
+                    cfg.cflag("-fcommon");
+                }
+            }
+        }
+    }
+
+    if target_os == "windows-gnu" {
+        cfg.define("VIDEO_OPENGLES", "OFF");
+    }
+
+    if target_os == "android" {
+        cfg.define(
+            "ANDROID_NDK",
+            env::var("ANDROID_NDK_HOME").expect(
+                "ANDROID_NDK_HOME environment variable must be set when compiling for Android",
+            ),
+        );
+    }
+
+    cfg.define("SDL2TTF_VENDORED", "ON");
+    if cfg!(feature = "static-link") {
+        cfg.define("SDL_SHARED", "OFF");
+        cfg.define("SDL_STATIC", "ON");
+        cfg.define("BUILD_SHARED_LIBS", "OFF");
+    } else {
+        cfg.define("SDL_SHARED", "ON");
+        cfg.define("SDL_STATIC", "OFF");
+        cfg.define("BUILD_SHARED_LIBS", "ON");
+    }
+
+    cfg.build()
+}
+
 #[cfg(not(feature = "bundled"))]
 fn compute_include_paths(fallback_path: String) -> Vec<String> {
     let mut include_paths: Vec<String> = vec![];
@@ -244,6 +311,10 @@ fn link_sdl2(target_os: &str) {
 
     #[cfg(feature = "static-link")]
     {
+        if cfg!(feature = "bundled-ttf") {
+            println!("cargo:rustc-link-lib=static=SDL2_ttf"); 
+            println!("cargo:rustc-link-lib=static=freetype"); 
+        }
         if cfg!(feature = "bundled")
             || (cfg!(feature = "use-pkgconfig") == false && cfg!(feature = "use-vcpkg") == false)
         {
@@ -572,6 +643,35 @@ fn main() {
     {
         copy_pregenerated_bindings();
         println!("cargo:include={}", sdl2_includes);
+    }
+
+    let sdl2_ttf_source_path =
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("SDL_ttf");
+
+    let sdl2_ttf_compiled_path: PathBuf;
+    #[cfg(feature = "bundled-ttf")]
+    {
+        init_submodule(sdl2_ttf_source_path.clone().as_path());
+
+        {
+            let path = sdl2_ttf_source_path.join("CMakeLists.txt");
+            let contents = fs::read_to_string(path.clone()).unwrap();
+            let new = contents.replace("add_subdirectory(external/freetype EXCLUDE_FROM_ALL)", "add_subdirectory(external/freetype)");
+        
+            let mut file = std::fs::OpenOptions::new().write(true).truncate(true).open(path).unwrap();
+            file.write(new.as_bytes()).unwrap();   
+        }
+
+        sdl2_ttf_compiled_path = compile_sdl2_ttf(sdl2_ttf_source_path.as_path(), target_os);
+
+        println!(
+            "cargo:rustc-link-search={}",
+            sdl2_ttf_compiled_path.join("lib64").display()
+        );
+        println!(
+            "cargo:rustc-link-search={}",
+            sdl2_ttf_compiled_path.join("lib").display()
+        );
     }
 
     link_sdl2(target_os);

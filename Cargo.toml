@@ -55,6 +55,7 @@ use-vcpkg = ["sdl2-sys/use-vcpkg"]
 use_mac_framework = ["sdl2-sys/use_mac_framework"]
 use_ios_framework = ["sdl2-sys/use_ios_framework"]
 bundled = ["sdl2-sys/bundled"]
+bundled-ttf = ["sdl2-sys/bundled-ttf"]
 static-link = ["sdl2-sys/static-link"]
 
 [package.metadata.docs.rs]
