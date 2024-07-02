@@ -533,7 +533,8 @@ fn main() {
     let target_os = get_os_from_triple(target.as_str()).unwrap();
 
     let sdl2_source_path = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("SDL");
-    let bundled_source_path = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("bundled");
+    let bundled_source_path =
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("bundled");
 
     let compiled_path: PathBuf;
     #[cfg(feature = "bundled-any")]
