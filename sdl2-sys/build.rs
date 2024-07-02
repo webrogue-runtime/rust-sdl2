@@ -483,7 +483,7 @@ fn copy_library_file(src_path: &Path, target_path: &Path) {
     }
 }
 
-fn copy_dynamic_libraries(sdl2_compiled_path: &Path, target_os: &str) {
+fn copy_dynamic_libraries(compiled_path: &Path, target_os: &str) {
     let target_path = find_cargo_target_dir();
 
     // Windows binaries do not embed library search paths, so successfully
@@ -494,7 +494,7 @@ fn copy_dynamic_libraries(sdl2_compiled_path: &Path, target_os: &str) {
     // binary output directory.
     if target_os.contains("windows") {
         let sdl2_dll_name = "SDL2.dll";
-        let sdl2_bin_path = sdl2_compiled_path.join("bin");
+        let sdl2_bin_path = compiled_path.join("bin");
         let src_dll_path = sdl2_bin_path.join(sdl2_dll_name);
 
         copy_library_file(&src_dll_path, &target_path);
@@ -503,7 +503,7 @@ fn copy_dynamic_libraries(sdl2_compiled_path: &Path, target_os: &str) {
         let mut found = false;
         let lib_dirs = &["lib", "lib64"];
         for lib_dir in lib_dirs {
-            let lib_path = sdl2_compiled_path.join(lib_dir);
+            let lib_path = compiled_path.join(lib_dir);
             if lib_path.exists() {
                 found = true;
                 for entry in std::fs::read_dir(&lib_path)
@@ -535,18 +535,18 @@ fn main() {
     let sdl2_source_path = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("SDL");
     let bundled_source_path = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("bundled");
 
-    let sdl2_compiled_path: PathBuf;
+    let compiled_path: PathBuf;
     #[cfg(feature = "bundled-any")]
     {
-        sdl2_compiled_path = compile_bundled(bundled_source_path.as_path(), target_os);
+        compiled_path = compile_bundled(bundled_source_path.as_path(), target_os);
 
         println!(
             "cargo:rustc-link-search={}",
-            sdl2_compiled_path.join("lib64").display()
+            compiled_path.join("lib64").display()
         );
         println!(
             "cargo:rustc-link-search={}",
-            sdl2_compiled_path.join("lib").display()
+            compiled_path.join("lib").display()
         );
     }
 
@@ -585,7 +585,7 @@ fn main() {
         any(not(feature = "static-link"), target_os = "android")
     ))]
     {
-        copy_dynamic_libraries(&sdl2_compiled_path, target_os);
+        copy_dynamic_libraries(&compiled_path, target_os);
     }
 }
 
