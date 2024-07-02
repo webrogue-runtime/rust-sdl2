@@ -11,7 +11,10 @@ extern crate pkg_config;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::{env, fs, io::{self, Write}};
+use std::{
+    env, fs,
+    io::{self, Write},
+};
 
 #[cfg(feature = "bindgen")]
 macro_rules! add_msvc_includes_to_bindings {
@@ -312,8 +315,8 @@ fn link_sdl2(target_os: &str) {
     #[cfg(feature = "static-link")]
     {
         if cfg!(feature = "bundled-ttf") {
-            println!("cargo:rustc-link-lib=static=SDL2_ttf"); 
-            println!("cargo:rustc-link-lib=static=freetype"); 
+            println!("cargo:rustc-link-lib=static=SDL2_ttf");
+            println!("cargo:rustc-link-lib=static=freetype");
         }
         if cfg!(feature = "bundled")
             || (cfg!(feature = "use-pkgconfig") == false && cfg!(feature = "use-vcpkg") == false)
@@ -653,16 +656,9 @@ fn main() {
     {
         init_submodule(sdl2_ttf_source_path.clone().as_path());
 
-        {
-            let path = sdl2_ttf_source_path.join("CMakeLists.txt");
-            let contents = fs::read_to_string(path.clone()).unwrap();
-            let new = contents.replace("add_subdirectory(external/freetype EXCLUDE_FROM_ALL)", "add_subdirectory(external/freetype)");
-        
-            let mut file = std::fs::OpenOptions::new().write(true).truncate(true).open(path).unwrap();
-            file.write(new.as_bytes()).unwrap();   
-        }
+        sdl2_ttf_compiled_path =
+            compile_sdl2_ttf(sdl2_ttf_source_path.as_path(), target_os);
 
-        sdl2_ttf_compiled_path = compile_sdl2_ttf(sdl2_ttf_source_path.as_path(), target_os);
 
         println!(
             "cargo:rustc-link-search={}",
