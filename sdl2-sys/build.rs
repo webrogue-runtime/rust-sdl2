@@ -4,14 +4,17 @@
 extern crate bindgen;
 #[macro_use]
 extern crate cfg_if;
-#[cfg(feature = "bundled")]
+#[cfg(feature = "bundled-any")]
 extern crate cmake;
 #[cfg(feature = "pkg-config")]
 extern crate pkg_config;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::{env, fs, io};
+use std::{
+    env, fs,
+    io::{self, Write},
+};
 
 #[cfg(feature = "bindgen")]
 macro_rules! add_msvc_includes_to_bindings {
@@ -30,17 +33,6 @@ macro_rules! add_msvc_includes_to_bindings {
             "-IC:/Program Files (x86)/Windows Kits/8.1/Include/um"
         ));
     };
-}
-
-#[cfg(feature = "bundled")]
-fn init_submodule(sdl_path: &Path) {
-    if !sdl_path.join("CMakeLists.txt").exists() {
-        Command::new("git")
-            .args(["submodule", "update", "--init"])
-            .current_dir(sdl_path)
-            .status()
-            .expect("Git is needed to retrieve the SDL source files");
-    }
 }
 
 #[cfg(feature = "use-pkgconfig")]
@@ -92,9 +84,9 @@ fn get_vcpkg_config() {
 }
 
 // compile a shared or static lib depending on the feature
-#[cfg(feature = "bundled")]
-fn compile_sdl2(sdl2_build_path: &Path, target_os: &str) -> PathBuf {
-    let mut cfg = cmake::Config::new(sdl2_build_path);
+#[cfg(feature = "bundled-any")]
+fn compile_bundled(build_path: &Path, target_os: &str) -> PathBuf {
+    let mut cfg = cmake::Config::new(build_path);
     if let Ok(profile) = env::var("SDL2_BUILD_PROFILE") {
         cfg.profile(&profile);
         cfg.define("CMAKE_CONFIGURATION_TYPES", &profile);
@@ -145,20 +137,27 @@ fn compile_sdl2(sdl2_build_path: &Path, target_os: &str) -> PathBuf {
     }
 
     if cfg!(feature = "static-link") {
-        cfg.define("SDL_SHARED", "OFF");
-        cfg.define("SDL_STATIC", "ON");
-        // Prevent SDL to provide it own "main" which cause a conflict when this crate linked
-        // to C/C++ program.
-        cfg.define("SDL_MAIN_HANDLED", "ON");
+        cfg.define("RUST_SDL_BUNDLED_STATIC", "ON");
     } else {
-        cfg.define("SDL_SHARED", "ON");
-        cfg.define("SDL_STATIC", "OFF");
+        cfg.define("RUST_SDL_BUNDLED_STATIC", "OFF");
+    }
+
+    if cfg!(feature = "bundled") {
+        cfg.define("RUST_SDL_BUNDLED_SDL2", "ON");
+    } else {
+        cfg.define("RUST_SDL_BUNDLED_SDL2", "OFF");
+    }
+
+    if cfg!(feature = "bundled-ttf") {
+        cfg.define("RUST_SDL_BUNDLED_SDL2_TTF", "ON");
+    } else {
+        cfg.define("RUST_SDL_BUNDLED_SDL2_TTF", "OFF");
     }
 
     cfg.build()
 }
 
-#[cfg(not(feature = "bundled"))]
+#[cfg(not(feature = "bundled-any"))]
 fn compute_include_paths(fallback_path: String) -> Vec<String> {
     let mut include_paths: Vec<String> = vec![];
 
@@ -244,6 +243,10 @@ fn link_sdl2(target_os: &str) {
 
     #[cfg(feature = "static-link")]
     {
+        if cfg!(feature = "bundled-ttf") {
+            println!("cargo:rustc-link-lib=static=SDL2_ttf");
+            println!("cargo:rustc-link-lib=static=freetype");
+        }
         if cfg!(feature = "bundled")
             || (cfg!(feature = "use-pkgconfig") == false && cfg!(feature = "use-vcpkg") == false)
         {
@@ -480,7 +483,7 @@ fn copy_library_file(src_path: &Path, target_path: &Path) {
     }
 }
 
-fn copy_dynamic_libraries(sdl2_compiled_path: &Path, target_os: &str) {
+fn copy_dynamic_libraries(compiled_path: &Path, target_os: &str) {
     let target_path = find_cargo_target_dir();
 
     // Windows binaries do not embed library search paths, so successfully
@@ -491,7 +494,7 @@ fn copy_dynamic_libraries(sdl2_compiled_path: &Path, target_os: &str) {
     // binary output directory.
     if target_os.contains("windows") {
         let sdl2_dll_name = "SDL2.dll";
-        let sdl2_bin_path = sdl2_compiled_path.join("bin");
+        let sdl2_bin_path = compiled_path.join("bin");
         let src_dll_path = sdl2_bin_path.join(sdl2_dll_name);
 
         copy_library_file(&src_dll_path, &target_path);
@@ -500,7 +503,7 @@ fn copy_dynamic_libraries(sdl2_compiled_path: &Path, target_os: &str) {
         let mut found = false;
         let lib_dirs = &["lib", "lib64"];
         for lib_dir in lib_dirs {
-            let lib_path = sdl2_compiled_path.join(lib_dir);
+            let lib_path = compiled_path.join(lib_dir);
             if lib_path.exists() {
                 found = true;
                 for entry in std::fs::read_dir(&lib_path)
@@ -530,20 +533,21 @@ fn main() {
     let target_os = get_os_from_triple(target.as_str()).unwrap();
 
     let sdl2_source_path = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("SDL");
+    let bundled_source_path =
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("bundled");
 
-    let sdl2_compiled_path: PathBuf;
-    #[cfg(feature = "bundled")]
+    let compiled_path: PathBuf;
+    #[cfg(feature = "bundled-any")]
     {
-        init_submodule(sdl2_source_path.as_path());
-        sdl2_compiled_path = compile_sdl2(sdl2_source_path.as_path(), target_os);
+        compiled_path = compile_bundled(bundled_source_path.as_path(), target_os);
 
         println!(
             "cargo:rustc-link-search={}",
-            sdl2_compiled_path.join("lib64").display()
+            compiled_path.join("lib64").display()
         );
         println!(
             "cargo:rustc-link-search={}",
-            sdl2_compiled_path.join("lib").display()
+            compiled_path.join("lib").display()
         );
     }
 
@@ -582,7 +586,7 @@ fn main() {
         any(not(feature = "static-link"), target_os = "android")
     ))]
     {
-        copy_dynamic_libraries(&sdl2_compiled_path, target_os);
+        copy_dynamic_libraries(&compiled_path, target_os);
     }
 }
 
