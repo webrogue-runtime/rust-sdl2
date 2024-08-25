@@ -26,6 +26,12 @@ if(RUST_SDL_BUNDLED_SDL2)
 
     set(SDL2_DISABLE_INSTALL OFF CACHE BOOL "")
     set(SDL2_DISABLE_INSTALL OFF)
+    
+    set(SDL_OPENGL OFF CACHE BOOL "")
+    set(SDL_OPENGL OFF)
+
+    set(SDL_OPENGLES ON CACHE BOOL "")
+    set(SDL_OPENGLES ON)
     add_subdirectory(../SDL sdl2)
 endif()
 
